@@ -1,5 +1,6 @@
 use std::path::{Path, PathBuf};
 use chrono::Local;
+use eframe::egui;
 use crate::types::*;
 use crate::file_ops;
 
@@ -79,7 +80,40 @@ pub enum ConfirmAction {
 }
 
 impl FileAssistantApp {
-    pub fn new(_cc: &eframe::CreationContext<'_>) -> Self {
+    pub fn new(cc: &eframe::CreationContext<'_>) -> Self {
+        // Load Chinese font support
+        let mut fonts = egui::FontDefinitions::default();
+        let font_paths = [
+            "/usr/share/fonts/truetype/wqy/wqy-microhei.ttc",
+            "/usr/share/fonts/wqy/wqy-microhei.ttc",
+            "/usr/share/fonts/truetype/wqy/wqy-zenhei.ttc",
+            "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
+            "/usr/share/fonts/noto-cjk/NotoSansCJK-Regular.ttc",
+            "/usr/share/fonts/truetype/noto/NotoSansCJKsc-Regular.otf",
+            "/usr/share/fonts/truetype/arphic/uming.ttc",
+            "/usr/share/fonts/truetype/arphic/ukai.ttc",
+            "C:/Windows/Fonts/msyh.ttc",
+            "C:/Windows/Fonts/simsun.ttc",
+            "/System/Library/Fonts/PingFang.ttc",
+            "/System/Library/Fonts/STHeiti Light.ttc",
+        ];
+        for path in &font_paths {
+            if let Ok(font_data) = std::fs::read(path) {
+                fonts.font_data.insert(
+                    "cn_font".to_owned(),
+                    egui::FontData::from_owned(font_data),
+                );
+                if let Some(family) = fonts.families.get_mut(&egui::FontFamily::Proportional) {
+                    family.insert(1, "cn_font".to_owned());
+                }
+                if let Some(family) = fonts.families.get_mut(&egui::FontFamily::Monospace) {
+                    family.push("cn_font".to_owned());
+                }
+                break;
+            }
+        }
+        cc.egui_ctx.set_fonts(fonts);
+
         let current_dir = std::env::current_dir()
             .unwrap_or_else(|_| PathBuf::from(dirs_home()));
 
@@ -118,13 +152,13 @@ impl FileAssistantApp {
             log_scroll_to_bottom: false,
             operation_in_progress: false,
             operation_progress: 0.0,
-            status_message: "Ready".to_string(),
+            status_message: "就绪".to_string(),
             sort_by: SortBy::Name,
             sort_ascending: true,
         };
 
         app.reload_dir();
-        app.log(LogLevel::Info, format!("Started. Working directory: {}", current_dir.display()));
+        app.log(LogLevel::Info, format!("已启动，工作目录：{}", current_dir.display()));
         app
     }
 
@@ -155,7 +189,7 @@ impl FileAssistantApp {
             self.path_input = path.to_string_lossy().to_string();
             self.reload_dir();
             self.selected_items.clear();
-            self.log(LogLevel::Info, format!("Navigated to: {}", path.display()));
+            self.log(LogLevel::Info, format!("已导航至：{}", path.display()));
         }
     }
 
@@ -185,11 +219,11 @@ impl FileAssistantApp {
 
                 self.sort_items(&mut items);
                 self.file_items = items;
-                self.set_status(format!("{} items", self.file_items.len()));
+                self.set_status(format!("共 {} 个项目", self.file_items.len()));
             }
             Err(e) => {
-                self.log(LogLevel::Error, format!("Failed to read directory: {}", e));
-                self.set_status("Error reading directory");
+                self.log(LogLevel::Error, format!("读取目录失败：{}", e));
+                self.set_status("读取目录失败");
             }
         }
     }
@@ -228,10 +262,10 @@ impl FileAssistantApp {
         let path = self.current_dir.join(name);
         match file_ops::create_file(&path) {
             Ok(_) => {
-                self.log(LogLevel::Success, format!("Created file: {}", name));
+                self.log(LogLevel::Success, format!("已创建文件：{}", name));
                 self.reload_dir();
             }
-            Err(e) => self.log(LogLevel::Error, format!("Create file failed: {}", e)),
+            Err(e) => self.log(LogLevel::Error, format!("创建文件失败：{}", e)),
         }
         self.new_file_input.clear();
         self.operation_mode = OperationMode::None;
@@ -241,10 +275,10 @@ impl FileAssistantApp {
         let path = self.current_dir.join(name);
         match file_ops::create_dir(&path) {
             Ok(_) => {
-                self.log(LogLevel::Success, format!("Created directory: {}", name));
+                self.log(LogLevel::Success, format!("已创建文件夹：{}", name));
                 self.reload_dir();
             }
-            Err(e) => self.log(LogLevel::Error, format!("Create directory failed: {}", e)),
+            Err(e) => self.log(LogLevel::Error, format!("创建文件夹失败：{}", e)),
         }
         self.new_dir_input.clear();
         self.operation_mode = OperationMode::None;
@@ -252,12 +286,12 @@ impl FileAssistantApp {
 
     pub fn delete_selected(&mut self) {
         if self.selected_items.is_empty() {
-            self.log(LogLevel::Warning, "No items selected".to_string());
+            self.log(LogLevel::Warning, "未选择任何项目".to_string());
             return;
         }
         let items = self.selected_items.clone();
         self.confirm_message = format!(
-            "Delete {} item(s)? This cannot be undone.",
+            "确定要删除 {} 个项目吗？此操作无法撤销。",
             items.len()
         );
         self.confirm_action = Some(ConfirmAction::DeleteItems(items));
@@ -271,17 +305,17 @@ impl FileAssistantApp {
             match file_ops::delete_item(path) {
                 Ok(_) => {
                     success += 1;
-                    self.log(LogLevel::Success, format!("Deleted: {}", path.display()));
+                    self.log(LogLevel::Success, format!("已删除：{}", path.display()));
                 }
                 Err(e) => {
                     failed += 1;
-                    self.log(LogLevel::Error, format!("Delete failed {}: {}", path.display(), e));
+                    self.log(LogLevel::Error, format!("删除失败 {}：{}", path.display(), e));
                 }
             }
         }
         self.log(
             if failed == 0 { LogLevel::Success } else { LogLevel::Warning },
-            format!("Delete complete: {} success, {} failed", success, failed),
+            format!("删除完成：{} 成功，{} 失败", success, failed),
         );
         self.selected_items.clear();
         self.reload_dir();
@@ -289,27 +323,27 @@ impl FileAssistantApp {
 
     pub fn copy_selected(&mut self) {
         if self.selected_items.is_empty() {
-            self.log(LogLevel::Warning, "No items selected".to_string());
+            self.log(LogLevel::Warning, "未选择任何项目".to_string());
             return;
         }
         self.clipboard = self.selected_items.clone();
         self.clipboard_is_cut = false;
-        self.log(LogLevel::Info, format!("Copied {} item(s) to clipboard", self.clipboard.len()));
+        self.log(LogLevel::Info, format!("已复制 {} 个项目到剪贴板", self.clipboard.len()));
     }
 
     pub fn cut_selected(&mut self) {
         if self.selected_items.is_empty() {
-            self.log(LogLevel::Warning, "No items selected".to_string());
+            self.log(LogLevel::Warning, "未选择任何项目".to_string());
             return;
         }
         self.clipboard = self.selected_items.clone();
         self.clipboard_is_cut = true;
-        self.log(LogLevel::Info, format!("Cut {} item(s) to clipboard", self.clipboard.len()));
+        self.log(LogLevel::Info, format!("已剪切 {} 个项目到剪贴板", self.clipboard.len()));
     }
 
     pub fn paste(&mut self) {
         if self.clipboard.is_empty() {
-            self.log(LogLevel::Warning, "Clipboard is empty".to_string());
+            self.log(LogLevel::Warning, "剪贴板为空".to_string());
             return;
         }
         let items = self.clipboard.clone();
@@ -333,12 +367,12 @@ impl FileAssistantApp {
                     success += 1;
                     self.log(
                         LogLevel::Success,
-                        format!("{}: {} -> {}", if is_cut { "Moved" } else { "Copied" }, src.display(), dst.display()),
+                        format!("{}：{} → {}", if is_cut { "已移动" } else { "已复制" }, src.display(), dst.display()),
                     );
                 }
                 Err(e) => {
                     failed += 1;
-                    self.log(LogLevel::Error, format!("Paste failed {}: {}", src.display(), e));
+                    self.log(LogLevel::Error, format!("粘贴失败 {}：{}", src.display(), e));
                 }
             }
         }
@@ -348,24 +382,24 @@ impl FileAssistantApp {
         }
         self.log(
             if failed == 0 { LogLevel::Success } else { LogLevel::Warning },
-            format!("Paste complete: {} success, {} failed", success, failed),
+            format!("粘贴完成：{} 成功，{} 失败", success, failed),
         );
         self.reload_dir();
     }
 
     pub fn rename_selected(&mut self, new_name: &str) {
         if self.selected_items.len() != 1 {
-            self.log(LogLevel::Warning, "Select exactly one item to rename".to_string());
+            self.log(LogLevel::Warning, "重命名需选择恰好一个项目".to_string());
             return;
         }
         let path = self.selected_items[0].clone();
         match file_ops::rename_item(&path, new_name) {
             Ok(new_path) => {
-                self.log(LogLevel::Success, format!("Renamed: {} -> {}", path.display(), new_path.display()));
+                self.log(LogLevel::Success, format!("已重命名：{} → {}", path.display(), new_path.display()));
                 self.selected_items.clear();
                 self.reload_dir();
             }
-            Err(e) => self.log(LogLevel::Error, format!("Rename failed: {}", e)),
+            Err(e) => self.log(LogLevel::Error, format!("重命名失败：{}", e)),
         }
         self.new_name_input.clear();
         self.operation_mode = OperationMode::None;
@@ -378,9 +412,9 @@ impl FileAssistantApp {
                 self.editor_path = Some(path.to_path_buf());
                 self.editor_modified = false;
                 self.active_tab = ActiveTab::FileExplorer;
-                self.log(LogLevel::Info, format!("Opened in editor: {}", path.display()));
+                self.log(LogLevel::Info, format!("已在编辑器中打开：{}", path.display()));
             }
-            Err(e) => self.log(LogLevel::Error, format!("Cannot open file: {}", e)),
+            Err(e) => self.log(LogLevel::Error, format!("无法打开文件：{}", e)),
         }
     }
 
@@ -389,10 +423,10 @@ impl FileAssistantApp {
             match file_ops::write_file_text(path, &self.editor_content) {
                 Ok(_) => {
                     self.editor_modified = false;
-                    self.log(LogLevel::Success, format!("Saved: {}", path.display()));
+                    self.log(LogLevel::Success, format!("已保存：{}", path.display()));
                     self.reload_dir();
                 }
-                Err(e) => self.log(LogLevel::Error, format!("Save failed: {}", e)),
+                Err(e) => self.log(LogLevel::Error, format!("保存失败：{}", e)),
             }
         }
     }
@@ -403,7 +437,7 @@ impl FileAssistantApp {
                 self.file_stats = Some(stats);
                 self.active_tab = ActiveTab::FileInfo;
             }
-            Err(e) => self.log(LogLevel::Error, format!("Cannot get file info: {}", e)),
+            Err(e) => self.log(LogLevel::Error, format!("无法获取文件信息：{}", e)),
         }
     }
 
@@ -415,7 +449,7 @@ impl FileAssistantApp {
         self.search_results = file_ops::search_files(&self.current_dir, &self.search_query, 200);
         self.log(
             LogLevel::Info,
-            format!("Search '{}': {} results", self.search_query, self.search_results.len()),
+            format!("搜索 '{}'：找到 {} 个结果", self.search_query, self.search_results.len()),
         );
     }
 
@@ -442,13 +476,13 @@ impl FileAssistantApp {
 
         match file_ops::batch_rename(&selected, &opts) {
             Ok(preview) => self.batch_preview = preview,
-            Err(e) => self.log(LogLevel::Error, format!("Batch preview error: {}", e)),
+            Err(e) => self.log(LogLevel::Error, format!("批量重命名预览错误：{}", e)),
         }
     }
 
     pub fn apply_batch_rename(&mut self) {
         if self.batch_preview.is_empty() {
-            self.log(LogLevel::Warning, "No batch rename preview to apply".to_string());
+            self.log(LogLevel::Warning, "没有可应用的批量重命名预览".to_string());
             return;
         }
         let results = file_ops::apply_batch_rename(&self.batch_preview);
@@ -458,17 +492,17 @@ impl FileAssistantApp {
             match result {
                 Ok(_) => {
                     success += 1;
-                    self.log(LogLevel::Success, format!("Renamed: {} -> {}", src.file_name().unwrap_or_default().to_string_lossy(), dst.file_name().unwrap_or_default().to_string_lossy()));
+                    self.log(LogLevel::Success, format!("已重命名：{} → {}", src.file_name().unwrap_or_default().to_string_lossy(), dst.file_name().unwrap_or_default().to_string_lossy()));
                 }
                 Err(e) => {
                     failed += 1;
-                    self.log(LogLevel::Error, format!("Batch rename failed {}: {}", src.display(), e));
+                    self.log(LogLevel::Error, format!("批量重命名失败 {}：{}", src.display(), e));
                 }
             }
         }
         self.log(
             if failed == 0 { LogLevel::Success } else { LogLevel::Warning },
-            format!("Batch rename: {} success, {} failed", success, failed),
+            format!("批量重命名：{} 成功，{} 失败", success, failed),
         );
         self.batch_preview.clear();
         self.reload_dir();
