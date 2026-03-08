@@ -1,8 +1,16 @@
 use std::path::{Path, PathBuf};
 use chrono::Local;
 use eframe::egui;
+use serde::{Deserialize, Serialize};
 use crate::types::*;
 use crate::file_ops;
+
+// ── Persisted config ──────────────────────────────────────────────────────────
+#[derive(Serialize, Deserialize, Default)]
+struct AppConfig {
+    bookmarks: Vec<Bookmark>,
+    recent_dirs: Vec<PathBuf>,
+}
 
 pub struct FileAssistantApp {
     // Navigation
@@ -35,7 +43,7 @@ pub struct FileAssistantApp {
     pub editor_modified: bool,
 
     // File info
-    pub file_stats: Option<crate::types::FileStats>,
+    pub file_stats: Option<FileStats>,
 
     // Batch operations
     pub batch_prefix: String,
@@ -63,6 +71,27 @@ pub struct FileAssistantApp {
     // Sort
     pub sort_by: SortBy,
     pub sort_ascending: bool,
+
+    // ── New features ─────────────────────────────────────────────────────────
+    /// User-defined bookmarks (persisted)
+    pub bookmarks: Vec<Bookmark>,
+    /// Input for adding a new bookmark name
+    pub bookmark_name_input: String,
+    /// Whether the add-bookmark inline form is shown
+    pub show_add_bookmark: bool,
+
+    /// Recently visited directories (persisted, max 15)
+    pub recent_dirs: Vec<PathBuf>,
+
+    /// Whether the right preview panel is visible
+    pub show_preview: bool,
+    /// Current preview content
+    pub preview_content: PreviewContent,
+    /// Path currently being previewed (to avoid redundant reads)
+    pub preview_path: Option<PathBuf>,
+
+    /// Disk space: (total_bytes, free_bytes)
+    pub disk_space: Option<(u64, u64)>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -77,6 +106,35 @@ pub enum SortBy {
 pub enum ConfirmAction {
     DeleteItems(Vec<PathBuf>),
     OverwriteFile(PathBuf),
+}
+
+// ── Config persistence ────────────────────────────────────────────────────────
+
+fn config_path() -> PathBuf {
+    let home = std::env::var("HOME")
+        .or_else(|_| std::env::var("USERPROFILE"))
+        .map(PathBuf::from)
+        .unwrap_or_else(|_| PathBuf::from("/"));
+    home.join(".config").join("file-assistant").join("config.json")
+}
+
+fn load_config() -> AppConfig {
+    let path = config_path();
+    if let Ok(data) = std::fs::read_to_string(&path) {
+        serde_json::from_str(&data).unwrap_or_default()
+    } else {
+        AppConfig::default()
+    }
+}
+
+fn save_config(cfg: &AppConfig) {
+    let path = config_path();
+    if let Some(parent) = path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    if let Ok(data) = serde_json::to_string_pretty(cfg) {
+        let _ = std::fs::write(&path, data);
+    }
 }
 
 impl FileAssistantApp {
@@ -95,7 +153,6 @@ impl FileAssistantApp {
             "C:/Windows/Fonts/msyh.ttc",
             "C:/Windows/Fonts/simsun.ttc",
             "/System/Library/Fonts/PingFang.ttc",
-            "/System/Library/Fonts/STHeiti Light.ttc",
         ];
         for path in &font_paths {
             if let Ok(font_data) = std::fs::read(path) {
@@ -114,8 +171,13 @@ impl FileAssistantApp {
         }
         cc.egui_ctx.set_fonts(fonts);
 
+        // Load persisted config
+        let cfg = load_config();
+
         let current_dir = std::env::current_dir()
             .unwrap_or_else(|_| PathBuf::from(dirs_home()));
+
+        let disk_space = file_ops::get_disk_space(&current_dir);
 
         let mut app = Self {
             path_input: current_dir.to_string_lossy().to_string(),
@@ -155,11 +217,103 @@ impl FileAssistantApp {
             status_message: "就绪".to_string(),
             sort_by: SortBy::Name,
             sort_ascending: true,
+            bookmarks: cfg.bookmarks,
+            bookmark_name_input: String::new(),
+            show_add_bookmark: false,
+            recent_dirs: cfg.recent_dirs,
+            show_preview: true,
+            preview_content: PreviewContent::None,
+            preview_path: None,
+            disk_space,
         };
 
         app.reload_dir();
         app.log(LogLevel::Info, format!("已启动，工作目录：{}", current_dir.display()));
         app
+    }
+
+    // ── Config persistence ────────────────────────────────────────────────────
+
+    pub fn persist_config(&self) {
+        save_config(&AppConfig {
+            bookmarks: self.bookmarks.clone(),
+            recent_dirs: self.recent_dirs.clone(),
+        });
+    }
+
+    // ── Bookmarks ─────────────────────────────────────────────────────────────
+
+    pub fn add_bookmark(&mut self, name: String, path: PathBuf) {
+        if self.bookmarks.iter().any(|b| b.path == path) {
+            self.log(LogLevel::Warning, format!("书签已存在：{}", path.display()));
+            return;
+        }
+        self.bookmarks.push(Bookmark { name, path: path.clone() });
+        self.persist_config();
+        self.log(LogLevel::Success, format!("已添加书签：{}", path.display()));
+    }
+
+    pub fn remove_bookmark(&mut self, idx: usize) {
+        if idx < self.bookmarks.len() {
+            let name = self.bookmarks[idx].name.clone();
+            self.bookmarks.remove(idx);
+            self.persist_config();
+            self.log(LogLevel::Info, format!("已删除书签：{}", name));
+        }
+    }
+
+    pub fn bookmark_current_dir(&mut self) {
+        let path = self.current_dir.clone();
+        let name = path.file_name()
+            .map(|n| n.to_string_lossy().to_string())
+            .unwrap_or_else(|| path.to_string_lossy().to_string());
+        if self.bookmark_name_input.is_empty() {
+            self.bookmark_name_input = name;
+        }
+    }
+
+    // ── Recent directories ────────────────────────────────────────────────────
+
+    fn add_recent_dir(&mut self, path: &PathBuf) {
+        self.recent_dirs.retain(|p| p != path);
+        self.recent_dirs.insert(0, path.clone());
+        if self.recent_dirs.len() > 15 {
+            self.recent_dirs.truncate(15);
+        }
+        self.persist_config();
+    }
+
+    // ── File preview ──────────────────────────────────────────────────────────
+
+    pub fn update_preview(&mut self, path: &Path) {
+        // Skip if same path already loaded
+        if self.preview_path.as_deref() == Some(path) {
+            return;
+        }
+        self.preview_path = Some(path.to_path_buf());
+
+        if path.is_dir() {
+            let entries: Vec<(String, String)> = match file_ops::list_dir(path) {
+                Ok(list) => list.iter().take(50).map(|p| {
+                    let icon = if p.is_dir() { "📁" } else { "📄" }.to_string();
+                    let name = p.file_name()
+                        .map(|n| n.to_string_lossy().to_string())
+                        .unwrap_or_default();
+                    (icon, name)
+                }).collect(),
+                Err(_) => vec![("⚠".to_string(), "无法读取目录".to_string())],
+            };
+            let total = std::fs::read_dir(path).map(|rd| rd.count()).unwrap_or(0);
+            self.preview_content = PreviewContent::Dir { entries, total };
+        } else {
+            let size = std::fs::metadata(path).map(|m| m.len()).unwrap_or(0);
+            let (lines, total_lines, is_text) = file_ops::read_file_preview(path, 80);
+            if is_text {
+                self.preview_content = PreviewContent::Text { lines, total_lines };
+            } else {
+                self.preview_content = PreviewContent::Binary { size };
+            }
+        }
     }
 
     // ── Logging ───────────────────────────────────────────────────────────────
@@ -189,6 +343,10 @@ impl FileAssistantApp {
             self.path_input = path.to_string_lossy().to_string();
             self.reload_dir();
             self.selected_items.clear();
+            self.preview_content = PreviewContent::None;
+            self.preview_path = None;
+            self.disk_space = file_ops::get_disk_space(&path);
+            self.add_recent_dir(&path);
             self.log(LogLevel::Info, format!("已导航至：{}", path.display()));
         }
     }
@@ -230,17 +388,11 @@ impl FileAssistantApp {
 
     fn sort_items(&self, items: &mut Vec<FileItem>) {
         items.sort_by(|a, b| {
-            // Directories always first
             let a_dir = a.item_type == FileItemType::Directory;
             let b_dir = b.item_type == FileItemType::Directory;
             if a_dir != b_dir {
-                return if a_dir {
-                    std::cmp::Ordering::Less
-                } else {
-                    std::cmp::Ordering::Greater
-                };
+                return if a_dir { std::cmp::Ordering::Less } else { std::cmp::Ordering::Greater };
             }
-
             let ord = match self.sort_by {
                 SortBy::Name => a.name.to_lowercase().cmp(&b.name.to_lowercase()),
                 SortBy::Size => a.size.cmp(&b.size),
@@ -251,7 +403,6 @@ impl FileAssistantApp {
                     ae.cmp(&be)
                 }
             };
-
             if self.sort_ascending { ord } else { ord.reverse() }
         });
     }
@@ -290,10 +441,7 @@ impl FileAssistantApp {
             return;
         }
         let items = self.selected_items.clone();
-        self.confirm_message = format!(
-            "确定要删除 {} 个项目吗？此操作无法撤销。",
-            items.len()
-        );
+        self.confirm_message = format!("确定要删除 {} 个项目吗？此操作无法撤销。", items.len());
         self.confirm_action = Some(ConfirmAction::DeleteItems(items));
         self.show_confirm_dialog = true;
     }
@@ -377,9 +525,7 @@ impl FileAssistantApp {
             }
         }
 
-        if is_cut && failed == 0 {
-            self.clipboard.clear();
-        }
+        if is_cut && failed == 0 { self.clipboard.clear(); }
         self.log(
             if failed == 0 { LogLevel::Success } else { LogLevel::Warning },
             format!("粘贴完成：{} 成功，{} 失败", success, failed),
@@ -454,16 +600,11 @@ impl FileAssistantApp {
     }
 
     pub fn update_batch_preview(&mut self) {
-        let selected: Vec<PathBuf> = self.selected_items.iter()
-            .filter(|p| p.is_file())
-            .cloned()
-            .collect();
-
+        let selected: Vec<PathBuf> = self.selected_items.iter().filter(|p| p.is_file()).cloned().collect();
         if selected.is_empty() {
             self.batch_preview.clear();
             return;
         }
-
         let opts = file_ops::BatchRenameOptions {
             prefix: self.batch_prefix.clone(),
             suffix: self.batch_suffix.clone(),
@@ -473,7 +614,6 @@ impl FileAssistantApp {
             start_number: self.batch_start_number,
             number_padding: self.batch_number_padding,
         };
-
         match file_ops::batch_rename(&selected, &opts) {
             Ok(preview) => self.batch_preview = preview,
             Err(e) => self.log(LogLevel::Error, format!("批量重命名预览错误：{}", e)),
@@ -492,7 +632,9 @@ impl FileAssistantApp {
             match result {
                 Ok(_) => {
                     success += 1;
-                    self.log(LogLevel::Success, format!("已重命名：{} → {}", src.file_name().unwrap_or_default().to_string_lossy(), dst.file_name().unwrap_or_default().to_string_lossy()));
+                    self.log(LogLevel::Success, format!("已重命名：{} → {}",
+                        src.file_name().unwrap_or_default().to_string_lossy(),
+                        dst.file_name().unwrap_or_default().to_string_lossy()));
                 }
                 Err(e) => {
                     failed += 1;
@@ -528,8 +670,6 @@ impl FileAssistantApp {
 }
 
 fn dirs_home() -> &'static str {
-    #[cfg(target_os = "windows")]
-    { "C:\\" }
-    #[cfg(not(target_os = "windows"))]
-    { "/" }
+    #[cfg(target_os = "windows")] { "C:\\" }
+    #[cfg(not(target_os = "windows"))] { "/" }
 }

@@ -2,6 +2,30 @@ use std::path::PathBuf;
 use chrono::{DateTime, Local};
 use serde::{Deserialize, Serialize};
 
+// ── Bookmark ──────────────────────────────────────────────────────────────────
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Bookmark {
+    pub name: String,
+    pub path: PathBuf,
+}
+
+// ── File preview content ──────────────────────────────────────────────────────
+#[derive(Debug, Clone)]
+pub enum PreviewContent {
+    /// Text file: lines to display + total line count
+    Text { lines: Vec<String>, total_lines: usize },
+    /// Directory: entry names + icons + total count
+    Dir { entries: Vec<(String, String)>, total: usize },
+    /// Binary / unreadable file
+    Binary { size: u64 },
+    /// Nothing selected
+    None,
+}
+
+impl Default for PreviewContent {
+    fn default() -> Self { PreviewContent::None }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum FileItemType {
     File,

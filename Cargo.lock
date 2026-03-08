@@ -3031,6 +3031,7 @@ dependencies = [
  "egui",
  "egui_extras",
  "humansize",
+ "libc",
  "md5",
  "open",
  "rfd",

@@ -5,6 +5,8 @@ use anyhow::{Context, Result};
 use chrono::{DateTime, Local};
 use walkdir::WalkDir;
 use crate::types::FileStats;
+#[cfg(unix)]
+extern crate libc;
 
 // ── Read file as text ─────────────────────────────────────────────────────────
 pub fn read_file_text(path: &Path) -> Result<String> {
@@ -320,4 +322,49 @@ pub fn search_files(root: &Path, pattern: &str, max_results: usize) -> Vec<PathB
 pub fn format_size(bytes: u64) -> String {
     use humansize::{format_size, DECIMAL};
     format_size(bytes, DECIMAL)
+}
+
+// ── Read file for preview (first N lines) ─────────────────────────────────────
+/// Returns (lines, total_line_count, is_text).
+/// Reads up to `max_lines` lines. If the file appears binary, returns is_text=false.
+pub fn read_file_preview(path: &Path, max_lines: usize) -> (Vec<String>, usize, bool) {
+    let bytes = match fs::read(path) {
+        Ok(b) => b,
+        Err(_) => return (vec!["[无法读取文件]".to_string()], 0, false),
+    };
+
+    // Detect binary: any null byte in the first 8KB → treat as binary
+    let probe = &bytes[..bytes.len().min(8192)];
+    if probe.contains(&0u8) {
+        return (vec![], 0, false);
+    }
+
+    let text = String::from_utf8_lossy(&bytes).to_string();
+    let total_lines = text.lines().count();
+    let lines: Vec<String> = text.lines().take(max_lines).map(|l| l.to_string()).collect();
+    (lines, total_lines, true)
+}
+
+// ── Get disk space for the filesystem containing `path` ───────────────────────
+#[cfg(unix)]
+pub fn get_disk_space(path: &Path) -> Option<(u64, u64)> {
+    use std::ffi::CString;
+    use std::mem;
+
+    let cpath = CString::new(path.to_string_lossy().as_bytes()).ok()?;
+    unsafe {
+        let mut stat: libc::statvfs = mem::zeroed();
+        if libc::statvfs(cpath.as_ptr(), &mut stat) == 0 {
+            let total = stat.f_blocks * stat.f_frsize;
+            let free  = stat.f_bavail * stat.f_frsize;
+            Some((total, free))
+        } else {
+            None
+        }
+    }
+}
+
+#[cfg(not(unix))]
+pub fn get_disk_space(_path: &Path) -> Option<(u64, u64)> {
+    None
 }
