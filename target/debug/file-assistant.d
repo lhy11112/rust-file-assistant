@@ -1,0 +1,1 @@
+E:\claude\workspacke\rust-file-assistant\target\debug\file-assistant.exe: E:\claude\workspacke\rust-file-assistant\src\app.rs E:\claude\workspacke\rust-file-assistant\src\file_ops.rs E:\claude\workspacke\rust-file-assistant\src\main.rs E:\claude\workspacke\rust-file-assistant\src\types.rs E:\claude\workspacke\rust-file-assistant\src\ui.rs
