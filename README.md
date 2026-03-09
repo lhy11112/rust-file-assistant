@@ -410,5 +410,7 @@ codegen-units = 4
 | 1.0.0 | 2026-03 | 初始版本，完整 GUI 文件管理器 |
 
 ---
+## 界面截图
+<img width="1920" height="1030" alt="4e384f6e-7872-4e81-ad34-b79a9244aae9" src="https://github.com/user-attachments/assets/7b1b75b1-4796-4cc1-ba06-7b60d33e54ac" />
 
 *MIT License — 自由使用、修改、分发*
